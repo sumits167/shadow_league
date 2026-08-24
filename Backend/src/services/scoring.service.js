@@ -53,54 +53,44 @@ export const updateLeagueLeaderboardService = async (leagueId) => {
         throw new ApiError(404, "League not found", "LEAGUE_NOT_FOUND");
     }
 
-    const teams = await Team.find({ leagueId });
+    const { calculateLiveLeaderboard } = await import('./matchSimulation.service.js');
+    const pointsMap = league.matchState?.playerFantasyPoints || {};
+    await calculateLiveLeaderboard(leagueId, pointsMap);
 
-    for (const team of teams) {
-        // Calculate cumulative points across all matchweeks
-        const lineups = await Lineup.find({ teamId: team._id }).populate('playerIds');
-        let totalScore = 0;
-
-        for (const lineup of lineups) {
-            const captainIdStr = lineup.captainId.toString();
-            const viceCaptainIdStr = lineup.viceCaptainId.toString();
-
-            for (const player of lineup.playerIds) {
-                const basePoints = player.fantasyPoints || player.stats?.points || 0;
-                let multiplier = 1.0;
-
-                if (player._id.toString() === captainIdStr) {
-                    multiplier = 2.0;
-                } else if (player._id.toString() === viceCaptainIdStr) {
-                    multiplier = 1.5;
-                }
-
-                totalScore += (basePoints * multiplier);
-            }
-        }
-
-        team.totalPoints = totalScore;
-        await team.save();
-    }
-
-    // Update ranks
     const sortedTeams = await Team.find({ leagueId }).sort({ totalPoints: -1 });
-    for (let i = 0; i < sortedTeams.length; i++) {
-        sortedTeams[i].rank = i + 1;
-        await sortedTeams[i].save();
-    }
-
     return sortedTeams;
 };
 
 export const getLeagueLeaderboardService = async (leagueId) => {
-    const league = await League.findById(leagueId).select('name season status');
+    const league = await League.findById(leagueId).select('name season status matchState matchDetails');
     if (!league) {
         throw new ApiError(404, "League not found", "LEAGUE_NOT_FOUND");
     }
 
-    const standings = await Team.find({ leagueId })
-        .populate('userId', 'username avatarUrl')
-        .sort({ rank: 1, totalPoints: -1 });
+    try {
+        const { calculateLiveLeaderboard } = await import('./matchSimulation.service.js');
+        const pointsMap = league.matchState?.playerFantasyPoints || {};
+        const liveStandings = await calculateLiveLeaderboard(leagueId, pointsMap);
+        if (liveStandings && liveStandings.length > 0) {
+            return {
+                league,
+                standings: liveStandings.map((s, index) => ({
+                    rank: s.rank || index + 1,
+                    teamId: s.teamId,
+                    teamName: s.teamName,
+                    owner: s.manager,
+                    avatarUrl: s.avatarUrl,
+                    totalPoints: s.totalPoints || 0
+                }))
+            };
+        }
+    } catch {
+        // fallback to database standings
+    }
+
+    let standings = await Team.find({ leagueId })
+        .populate('userId', 'username avatarUrl shadowPoints')
+        .sort({ totalPoints: -1 });
 
     return {
         league,
@@ -110,7 +100,7 @@ export const getLeagueLeaderboardService = async (leagueId) => {
             teamName: team.name,
             owner: team.userId?.username,
             avatarUrl: team.userId?.avatarUrl,
-            totalPoints: team.totalPoints
+            totalPoints: team.totalPoints || 0
         }))
     };
 };
@@ -138,6 +128,7 @@ export const getUserJoinedLeaguesStandingsService = async (userId, clubId) => {
         }));
 
         const userRank = standings.findIndex(s => s.isUserTeam) + 1;
+        const currentMyTeam = allTeams.find(t => String(t._id) === String(myTeam._id)) || myTeam;
 
         results.push({
             league: {
@@ -151,7 +142,7 @@ export const getUserJoinedLeaguesStandingsService = async (userId, clubId) => {
             myTeam: {
                 teamId: myTeam._id,
                 name: myTeam.name,
-                totalPoints: myTeam.totalPoints || 0,
+                totalPoints: currentMyTeam.totalPoints || 0,
                 rank: userRank || 1
             },
             totalTeams: allTeams.length,

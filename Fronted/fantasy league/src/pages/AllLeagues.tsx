@@ -119,9 +119,17 @@ export default function AllLeague() {
     e.preventDefault();
     const effectiveTeamName = teamName?.trim() || `${username}'s Squad`;
 
-    const targetLeague = (leagues as Array<{ _id: string; entryFee?: number }> || []).find(
+    const targetLeague = (leagues as Array<{ _id: string; status?: string; entryFee?: number }> || []).find(
       (l) => l._id === joiningLeagueId
     );
+
+    const targetStatus = targetLeague?.status?.toLowerCase();
+    if (targetStatus && targetStatus !== "created" && targetStatus !== "upcoming") {
+      toast.error(`Registration is closed for this league (status: ${targetLeague?.status}). You can only join leagues during the initial Created / Upcoming state.`);
+      setJoinLeagueOpen(false);
+      return;
+    }
+
     const fee = targetLeague?.entryFee || 0;
 
     const executeJoin = async () => {
@@ -453,13 +461,20 @@ export default function AllLeague() {
                       <ArrowRightIcon className="size-3.5" />
                     </Button>
                   </Link>
-                ) : league.status && league.status !== "Created" ? (
+                ) : (league.status && league.status.toLowerCase() !== "created" && league.status.toLowerCase() !== "upcoming") ? (
                   <Button
                     size="sm"
                     disabled
+                    title="Registration is closed because the draft or match is already underway."
                     className="flex-1 bg-secondary text-muted-foreground font-semibold text-xs cursor-not-allowed border border-border h-9"
                   >
-                    Registration Closed
+                    {league.status.toLowerCase() === "draft"
+                      ? "Draft in Progress"
+                      : league.status.toLowerCase() === "active" || league.status.toLowerCase() === "live"
+                      ? "Match in Progress"
+                      : league.status.toLowerCase() === "completed"
+                      ? "Season Ended"
+                      : "Registration Closed"}
                   </Button>
                 ) : (
                   <Button

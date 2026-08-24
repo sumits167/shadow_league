@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { TrophyIcon, UsersIcon, ClockIcon, MoreVerticalIcon, ArrowRightIcon, ZapIcon } from "lucide-react"
+import { TrophyIcon, UsersIcon, ClockIcon, MoreVerticalIcon, ArrowRightIcon } from "lucide-react"
 
 export interface ActiveLeagueProps {
   id: string
@@ -19,6 +19,7 @@ export interface ActiveLeagueProps {
   totalPoints: number
   deadline: string
   status: "LIVE" | "UPCOMING" | "DRAFT" | "COMPLETED" | string
+  hasJoined?: boolean
 }
 
 export function ActiveLeagueCard({
@@ -29,8 +30,10 @@ export function ActiveLeagueCard({
   totalPoints,
   deadline,
   status,
+  hasJoined = false,
 }: ActiveLeagueProps) {
   const normStatus = (status || "UPCOMING").toUpperCase();
+  const isCreatedOrUpcoming = normStatus === "UPCOMING" || normStatus === "CREATED";
 
   return (
     <Card className="rounded-2xl border border-border bg-card shadow-none flex flex-col justify-between hover:border-primary/40 transition-colors p-6 pb-6 space-y-4">
@@ -43,7 +46,11 @@ export function ActiveLeagueCard({
             </CardTitle>
           </div>
           <p className="text-xs text-muted-foreground">
-            Rank <span className="font-semibold text-foreground">#{rank}</span> of {totalMembers} Managers
+            {hasJoined ? (
+              <>Rank <span className="font-semibold text-foreground">#{rank}</span> of {totalMembers} Managers</>
+            ) : (
+              <span className="text-muted-foreground">{totalMembers} Max Teams</span>
+            )}
           </p>
         </div>
 
@@ -88,7 +95,7 @@ export function ActiveLeagueCard({
             <span className="font-bold text-foreground text-sm tabular-nums">{totalPoints.toFixed(1)} pts</span>
           </div>
           <div>
-            <span className="text-[10px] text-muted-foreground block uppercase font-medium">Members</span>
+            <span className="text-[10px] text-muted-foreground block uppercase font-medium">Capacity</span>
             <span className="font-semibold text-foreground text-sm flex items-center gap-1">
               <UsersIcon className="size-3 text-muted-foreground" />
               {totalMembers}
@@ -105,12 +112,36 @@ export function ActiveLeagueCard({
       </CardContent>
 
       <CardFooter className="p-0 pt-3 mt-auto">
-        <Link to={`/Dashboard/League/${id}`} className="w-full">
-          <Button variant="outline" size="sm" className="w-full justify-between text-xs border-border hover:bg-secondary hover:text-foreground font-medium cursor-pointer h-9">
-            <span>View League</span>
-            <ArrowRightIcon className="size-3.5 text-primary" />
+        {hasJoined ? (
+          <Link to={`/Dashboard/League/${id}`} className="w-full">
+            <Button variant="outline" size="sm" className="w-full justify-between text-xs border-primary/40 text-primary hover:bg-primary/10 font-semibold cursor-pointer h-9">
+              <span>View League</span>
+              <ArrowRightIcon className="size-3.5 text-primary" />
+            </Button>
+          </Link>
+        ) : isCreatedOrUpcoming ? (
+          <Link to={`/Dashboard/League/${id}`} className="w-full">
+            <Button size="sm" className="w-full justify-between text-xs bg-primary text-primary-foreground font-bold hover:bg-primary/90 cursor-pointer h-9 shadow-none">
+              <span>Join League</span>
+              <ArrowRightIcon className="size-3.5" />
+            </Button>
+          </Link>
+        ) : (
+          <Button
+            disabled
+            size="sm"
+            title="Registration is closed for this league because the draft or match is already in progress."
+            className="w-full justify-center text-xs bg-secondary text-muted-foreground font-semibold cursor-not-allowed border border-border h-9"
+          >
+            <span>
+              {normStatus === "DRAFT"
+                ? "Draft in Progress (Closed)"
+                : normStatus === "COMPLETED"
+                ? "Season Completed"
+                : "Registration Closed"}
+            </span>
           </Button>
-        </Link>
+        )}
       </CardFooter>
     </Card>
   )

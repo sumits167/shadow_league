@@ -40,6 +40,7 @@ import {
   AlertTriangleIcon,
   Settings2Icon,
   RadioIcon,
+  LockIcon,
 } from "lucide-react";
 import { useMe } from "@/features/auth/hooks/useAuth";
 import { useMyClubs } from "@/features/club/hooks/useClub";
@@ -75,6 +76,16 @@ export default function League() {
   const isMatchLiveOrCompleted =
     activeLeague?.matchState?.status === "Live" ||
     activeLeague?.matchState?.status === "Completed";
+
+  const scheduledDraftTime =
+    activeLeague?.draftState?.scheduledStartTime ||
+    activeLeague?.settings?.draftDate;
+
+  const isDraftScheduled =
+    Boolean(scheduledDraftTime) &&
+    new Date(scheduledDraftTime).getTime() > Date.now() &&
+    activeLeague?.status !== "Draft" &&
+    activeLeague?.status !== "Completed";
 
   const { data: leaderboardData, refetch: refetchLeaderboard } = useLeagueLeaderboard(activeLeagueId);
   const { data: myTeam, refetch: refetchMyTeam } = useMyTeamInLeague(activeLeagueId);
@@ -204,6 +215,12 @@ export default function League() {
 
   const handleJoinLeague = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isCreatedOrUpcoming) {
+      toast.error(`Registration is closed for this league (${leagueStatus}). You can only join leagues during the initial Created / Upcoming state.`);
+      setJoinLeagueOpen(false);
+      return;
+    }
+
     const effectiveTeamName = `${username}'s Squad`;
     const fee = activeLeague?.entryFee || 0;
 
@@ -306,6 +323,12 @@ export default function League() {
   // Draft Start Handler with Validation
   const handleStartDraftNow = async () => {
     if (!activeLeagueId) return;
+
+    if (isDraftScheduled) {
+      toast.error(`Draft is locked to its scheduled time (${new Date(scheduledDraftTime).toLocaleString()}) and cannot be started manually.`);
+      return;
+    }
+
     if (totalTeams < minRequiredTeams) {
       toast.error(`Cannot start draft: At least ${minRequiredTeams} teams are required (currently ${totalTeams} team joined). Invite more members to proceed.`);
       return;
@@ -325,6 +348,12 @@ export default function League() {
   // Draft Schedule Handler
   const handleScheduleDraftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isDraftScheduled) {
+      toast.error("Draft schedule is already set and locked. It cannot be modified once scheduled.");
+      return;
+    }
+
     if (!scheduledDateTime) {
       toast.error("Please pick a scheduled start date and time");
       return;
@@ -340,7 +369,7 @@ export default function League() {
         leagueId: activeLeagueId,
         scheduledStartTime: new Date(scheduledDateTime).toISOString(),
       });
-      toast.success("Draft successfully scheduled!");
+      toast.success("Draft successfully scheduled and locked!");
       setDraftControlOpen(false);
       refetchLeagues();
       refetchDraftState();
@@ -456,8 +485,8 @@ export default function League() {
             </div>
           )}
 
-          {/* Join League Sheet if not joined yet */}
-          {!hasJoinedLeague && (
+          {/* Join League Sheet only if not joined yet and league is in Created / Upcoming state */}
+          {!hasJoinedLeague && isCreatedOrUpcoming && (
             <Sheet open={joinLeagueOpen} onOpenChange={setJoinLeagueOpen}>
               <SheetTrigger
                 render={
@@ -544,13 +573,23 @@ export default function League() {
             <Sheet open={draftControlOpen} onOpenChange={setDraftControlOpen}>
               <SheetTrigger
                 render={
-                  <Button
-                    size="sm"
-                    className="gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold hover:opacity-90 text-xs shadow-none cursor-pointer"
-                  >
-                    <PlayCircleIcon className="size-3.5" />
-                    <span>Start / Schedule Draft</span>
-                  </Button>
+                  isDraftScheduled ? (
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-secondary text-foreground border border-purple-500/40 font-bold hover:bg-secondary/80 text-xs shadow-none cursor-pointer"
+                    >
+                      <LockIcon className="size-3.5 text-purple-400" />
+                      <span>Draft Scheduled (Locked)</span>
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold hover:opacity-90 text-xs shadow-none cursor-pointer"
+                    >
+                      <PlayCircleIcon className="size-3.5" />
+                      <span>Start / Schedule Draft</span>
+                    </Button>
+                  )
                 }
               />
               <SheetContent side="right" className="bg-card border-l border-border p-6 flex flex-col justify-between w-full sm:max-w-md overflow-y-auto">
@@ -560,89 +599,117 @@ export default function League() {
                     Draft Control Center
                   </SheetTitle>
                   <SheetDescription className="text-xs text-muted-foreground">
-                    Launch the live Snake Draft immediately or schedule a countdown for participants.
+                    {isDraftScheduled
+                      ? "The draft time is locked and will start automatically when the countdown arrives."
+                      : "Launch the live Snake Draft immediately or schedule a countdown for participants."}
                   </SheetDescription>
                 </SheetHeader>
 
                 <div className="space-y-6 my-auto">
-                  {/* Validation Notice if < minRequiredTeams */}
-                  {totalTeams < (activeLeague?.settings?.minTeams || 2) ? (
-                    <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <AlertTriangleIcon className="size-4 text-amber-400" />
-                        Minimum {activeLeague?.settings?.minTeams || 2} Teams Required
+                  {isDraftScheduled ? (
+                    <div className="p-4 rounded-xl border border-purple-500/40 bg-purple-500/10 space-y-3">
+                      <div className="flex items-center gap-2 text-purple-300 font-bold text-sm">
+                        <LockIcon className="size-4 text-purple-400" />
+                        <span>Draft Schedule is Locked</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        Currently only <strong>{totalTeams} team(s)</strong> registered. Minimum <strong>{activeLeague?.settings?.minTeams || 2} teams</strong> required to launch or schedule the draft.
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        The Snake Draft has been locked and officially scheduled to start at:
                       </p>
+                      <div className="p-3 rounded-lg border border-purple-500/30 bg-purple-500/10 text-purple-200 font-mono font-bold text-xs flex items-center gap-2">
+                        <CalendarIcon className="size-4 text-purple-400" />
+                        <span>{new Date(scheduledDraftTime).toLocaleString()}</span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-background/60 border border-border text-[11px] text-muted-foreground space-y-1.5">
+                        <div className="font-semibold text-foreground flex items-center gap-1.5">
+                          <ClockIcon className="size-3.5 text-primary" /> Automatic Start Enforced
+                        </div>
+                        <p>
+                          Once a draft time is scheduled, it cannot be modified, rescheduled, or started manually before the appointed time. The draft room will open automatically at the exact scheduled countdown.
+                        </p>
+                      </div>
                     </div>
                   ) : (
-                    <div className="p-3 rounded-xl border border-green-500/40 bg-green-500/10 text-green-300 text-xs flex items-center gap-2">
-                      <CheckCircle2Icon className="size-4 text-green-400 shrink-0" />
-                      <span>Ready to draft! <strong>{totalTeams} teams</strong> registered.</span>
-                    </div>
-                  )}
-
-                  {/* Option 1: Start Immediately */}
-                  <div className="p-4 rounded-xl border border-border bg-secondary/20 space-y-3">
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        <PlayCircleIcon className="size-4 text-primary" /> Option 1: Start Draft Immediately
-                      </h4>
-                      <p className="text-[11px] text-muted-foreground">
-                        Opens the Snake Draft room right now with 30s pick timers for each turn.
-                      </p>
-                    </div>
-
-                    <Button
-                      onClick={handleStartDraftNow}
-                      disabled={totalTeams < (activeLeague?.settings?.minTeams || 2) || startDraftMutation.isPending}
-                      className="w-full bg-primary text-primary-foreground font-bold hover:bg-primary/90 text-xs h-9 cursor-pointer shadow-none"
-                    >
-                      {startDraftMutation.isPending ? (
-                        <>
-                          <Loader2 className="size-3.5 animate-spin mr-1.5" />
-                          Starting Draft...
-                        </>
+                    <>
+                      {/* Validation Notice if < minRequiredTeams */}
+                      {totalTeams < (activeLeague?.settings?.minTeams || 2) ? (
+                        <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs space-y-1">
+                          <div className="font-bold flex items-center gap-1.5">
+                            <AlertTriangleIcon className="size-4 text-amber-400" />
+                            Minimum {activeLeague?.settings?.minTeams || 2} Teams Required
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Currently only <strong>{totalTeams} team(s)</strong> registered. Minimum <strong>{activeLeague?.settings?.minTeams || 2} teams</strong> required to launch or schedule the draft.
+                          </p>
+                        </div>
                       ) : (
-                        "Launch Draft Now"
+                        <div className="p-3 rounded-xl border border-green-500/40 bg-green-500/10 text-green-300 text-xs flex items-center gap-2">
+                          <CheckCircle2Icon className="size-4 text-green-400 shrink-0" />
+                          <span>Ready to draft! <strong>{totalTeams} teams</strong> registered.</span>
+                        </div>
                       )}
-                    </Button>
-                  </div>
 
-                  {/* Option 2: Schedule Draft */}
-                  <form onSubmit={handleScheduleDraftSubmit} className="p-4 rounded-xl border border-border bg-secondary/20 space-y-3">
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        <CalendarIcon className="size-4 text-primary" /> Option 2: Schedule for Later
-                      </h4>
-                      <p className="text-[11px] text-muted-foreground">
-                        Set a scheduled date & time for draft countdown.
-                      </p>
-                    </div>
+                      {/* Option 1: Start Immediately */}
+                      <div className="p-4 rounded-xl border border-border bg-secondary/20 space-y-3">
+                        <div className="space-y-0.5">
+                          <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <PlayCircleIcon className="size-4 text-primary" /> Option 1: Start Draft Immediately
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Opens the Snake Draft room right now with 30s pick timers for each turn.
+                          </p>
+                        </div>
 
-                    <div className="space-y-1.5">
-                      <Label htmlFor="schedule-time" className="text-xs font-semibold text-foreground">
-                        Draft Start Date & Time
-                      </Label>
-                      <Input
-                        id="schedule-time"
-                        type="datetime-local"
-                        value={scheduledDateTime}
-                        onChange={(e) => setScheduledDateTime(e.target.value)}
-                        className="bg-background border-border text-foreground text-xs"
-                      />
-                    </div>
+                        <Button
+                          onClick={handleStartDraftNow}
+                          disabled={totalTeams < (activeLeague?.settings?.minTeams || 2) || startDraftMutation.isPending}
+                          className="w-full bg-primary text-primary-foreground font-bold hover:bg-primary/90 text-xs h-9 cursor-pointer shadow-none"
+                        >
+                          {startDraftMutation.isPending ? (
+                            <>
+                              <Loader2 className="size-3.5 animate-spin mr-1.5" />
+                              Starting Draft...
+                            </>
+                          ) : (
+                            "Launch Draft Now"
+                          )}
+                        </Button>
+                      </div>
 
-                    <Button
-                      type="submit"
-                      disabled={totalTeams < (activeLeague?.settings?.minTeams || 2) || scheduleDraftMutation.isPending}
-                      variant="outline"
-                      className="w-full text-xs font-bold h-9 border-primary/40 text-primary hover:bg-primary/10 cursor-pointer"
-                    >
-                      {scheduleDraftMutation.isPending ? "Scheduling..." : "Save Scheduled Time"}
-                    </Button>
-                  </form>
+                      {/* Option 2: Schedule Draft */}
+                      <form onSubmit={handleScheduleDraftSubmit} className="p-4 rounded-xl border border-border bg-secondary/20 space-y-3">
+                        <div className="space-y-0.5">
+                          <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <CalendarIcon className="size-4 text-primary" /> Option 2: Schedule for Later
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Set a scheduled date & time for draft countdown.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label htmlFor="schedule-time" className="text-xs font-semibold text-foreground">
+                            Draft Start Date & Time
+                          </Label>
+                          <Input
+                            id="schedule-time"
+                            type="datetime-local"
+                            value={scheduledDateTime}
+                            onChange={(e) => setScheduledDateTime(e.target.value)}
+                            className="bg-background border-border text-foreground text-xs"
+                          />
+                        </div>
+
+                        <Button
+                          type="submit"
+                          disabled={totalTeams < (activeLeague?.settings?.minTeams || 2) || scheduleDraftMutation.isPending}
+                          variant="outline"
+                          className="w-full text-xs font-bold h-9 border-primary/40 text-primary hover:bg-primary/10 cursor-pointer"
+                        >
+                          {scheduleDraftMutation.isPending ? "Scheduling..." : "Save Scheduled Time"}
+                        </Button>
+                      </form>
+                    </>
+                  )}
                 </div>
 
                 <SheetFooter className="p-0 pt-4 border-t border-border flex flex-row items-center justify-between">
@@ -703,9 +770,47 @@ export default function League() {
       </div>
 
       {/* ========================================================================= */}
+      {/* NON-ENROLLED USER IN STARTED / DRAFT / ACTIVE / COMPLETED LEAGUE          */}
+      {/* ========================================================================= */}
+      {!isCreatedOrUpcoming && !hasJoinedLeague && !isClubAdmin && (
+        <Card className="rounded-2xl border border-border bg-card p-8 sm:p-12 text-center max-w-xl mx-auto shadow-none space-y-5 my-8">
+          <div className="size-16 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <LockIcon className="size-8" />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-center gap-2">
+              <Badge variant="outline" className="border-amber-500/40 text-amber-400 bg-amber-500/10 text-xs font-bold uppercase">
+                {isDrafting ? "Draft In Progress" : isActive ? "Match Live" : "Registration Closed"}
+              </Badge>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-extrabold text-foreground">
+              Registration Closed for this League
+            </h2>
+            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+              You are not enrolled in <strong>{currentLeagueName}</strong>. This league has already progressed past the registration phase. Teams can only join during the initial <strong>Created / Upcoming</strong> stage before the Snake Draft begins.
+            </p>
+          </div>
+
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link to="/Dashboard/AllLeagues" className="w-full sm:w-auto">
+              <Button className="w-full sm:w-auto bg-primary text-primary-foreground font-bold hover:bg-primary/90 text-xs gap-2 h-9 shadow-none cursor-pointer">
+                <TrophyIcon className="size-4" />
+                <span>Browse Available Leagues</span>
+              </Button>
+            </Link>
+            <Link to="/Dashboard" className="w-full sm:w-auto">
+              <Button variant="outline" className="w-full sm:w-auto text-xs font-semibold border-border hover:bg-secondary h-9 cursor-pointer">
+                <span>Back to Dashboard</span>
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {/* ========================================================================= */}
       {/* 1. DRAFT STATE: LIVE SNAKE DRAFT ROOM                                    */}
       {/* ========================================================================= */}
-      {isDrafting && (
+      {isDrafting && (hasJoinedLeague || isClubAdmin) && (
         <DraftRoom
           leagueId={activeLeagueId}
           myUsername={username}
@@ -930,7 +1035,7 @@ export default function League() {
       {/* ========================================================================= */}
       {/* 3. ACTIVE / COMPLETED STATE: LIVE MATCH SIMULATION & LEADERBOARD         */}
       {/* ========================================================================= */}
-      {!isCreatedOrUpcoming && !isDrafting && (
+      {!isCreatedOrUpcoming && !isDrafting && (hasJoinedLeague || isClubAdmin) && (
         <div className="space-y-6">
           <LiveMatchCenter
             leagueId={activeLeagueId}

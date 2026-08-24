@@ -2,10 +2,47 @@ import { League } from '../models/league.model.js';
 import { Team } from '../models/team.model.js';
 import { User } from '../models/user.model.js';
 import { Lineup } from '../models/lineup.model.js';
+import { Roster } from '../models/roster.model.js';
+import { Player } from '../models/player.model.js';
 import { autoSelectAllPendingLineupsService } from './lineup.service.js';
 
 // In-memory active match simulation intervals: leagueId -> { timer, speed, isRunning, currentIndex, ... }
 const activeSimulations = new Map();
+
+// Helper to safely convert Map or plain object to a clean Object without Mongoose internal keys
+export function sanitizePointsMapToObject(mapOrObj) {
+    const result = {};
+    if (!mapOrObj) return result;
+    if (mapOrObj instanceof Map) {
+        for (const [k, v] of mapOrObj.entries()) {
+            if (typeof k === 'string' && !k.startsWith('$')) {
+                result[k] = Number(v) || 0;
+            }
+        }
+    } else if (typeof mapOrObj === 'object' && mapOrObj !== null) {
+        for (const [k, v] of Object.entries(mapOrObj)) {
+            if (typeof k === 'string' && !k.startsWith('$')) {
+                result[k] = Number(v) || 0;
+            }
+        }
+    }
+    return result;
+}
+
+// Helper to award points to all identifier aliases (id, _id, name)
+export function awardPoints(pointsMap, playerObj, pts) {
+    if (!playerObj || !pointsMap || !pts) return;
+    const ids = [];
+    if (playerObj.id) ids.push(String(playerObj.id));
+    if (playerObj._id) ids.push(String(playerObj._id));
+    if (playerObj.name) ids.push(String(playerObj.name).toLowerCase().trim());
+
+    ids.forEach(id => {
+        if (!id.startsWith('$')) {
+            pointsMap.set(id, (pointsMap.get(id) || 0) + pts);
+        }
+    });
+}
 
 // Helper to generate simulated 2-innings ball-by-ball events for a full cricket match
 export function generateMatchBalls(matchDetails, squad = []) {
@@ -118,38 +155,131 @@ export async function awardShadowLeaguePoints(league, finalLeaderboard) {
 
 // Calculate fantasy leaderboard based on current player points
 export async function calculateLiveLeaderboard(leagueId, playerPointsMap) {
+    const league = await League.findById(leagueId);
     const teams = await Team.find({ leagueId }).populate('userId', 'username avatarUrl shadowPoints');
     const standings = [];
 
+    // Reconstruct player points map if not provided but stored on league
+    let activePointsMap = playerPointsMap;
+    if ((!activePointsMap || (activePointsMap instanceof Map && activePointsMap.size === 0) || (typeof activePointsMap === 'object' && Object.keys(activePointsMap).length === 0)) && league?.matchState?.playerFantasyPoints) {
+        activePointsMap = league.matchState.playerFantasyPoints;
+    }
+
+    const poolMap = new Map();
+    (league?.matchPlayerPool || []).forEach(p => {
+        if (p.id) poolMap.set(p.id, p);
+        if (p._id) poolMap.set(p._id.toString(), p);
+        if (p.name) poolMap.set(p.name.toLowerCase().trim(), p);
+    });
+
+    // Pre-fetch any DB players that might be referenced by 24-char ObjectId
+    const allPlayerRefs = [];
     for (const team of teams) {
-        const lineup = await Lineup.findOne({ teamId: team._id, matchWeek: 1 });
+        let lineup = await Lineup.findOne({ teamId: team._id, matchWeek: 1 });
+        if (!lineup || !lineup.playerIds || lineup.playerIds.length === 0) {
+            const roster = await Roster.findOne({ teamId: team._id });
+            if (roster && roster.playerIds) {
+                allPlayerRefs.push(...roster.playerIds);
+            }
+        } else {
+            allPlayerRefs.push(...lineup.playerIds);
+        }
+    }
+
+    const missingObjectIds = allPlayerRefs
+        .map(p => (p ? (typeof p === 'string' ? p : (p._id ? p._id.toString() : p.id ? p.id.toString() : "")) : ""))
+        .filter(id => id && id.length === 24 && !poolMap.has(id));
+
+    if (missingObjectIds.length > 0) {
+        try {
+            const dbPlayers = await Player.find({ _id: { $in: missingObjectIds } });
+            dbPlayers.forEach(p => {
+                poolMap.set(p._id.toString(), p);
+                if (p.id) poolMap.set(p.id, p);
+                if (p.name) poolMap.set(p.name.toLowerCase().trim(), p);
+            });
+        } catch {
+            // ignore
+        }
+    }
+
+    for (const team of teams) {
+        let lineup = await Lineup.findOne({ teamId: team._id, matchWeek: 1 });
+        // Fallback to roster if no lineup was explicitly submitted
+        if (!lineup || !lineup.playerIds || lineup.playerIds.length === 0) {
+            const roster = await Roster.findOne({ teamId: team._id });
+            if (roster && roster.playerIds && roster.playerIds.length > 0) {
+                lineup = {
+                    playerIds: roster.playerIds.slice(0, 11),
+                    captainId: roster.playerIds[0],
+                    viceCaptainId: roster.playerIds[1] || roster.playerIds[0]
+                };
+            }
+        }
+
         let totalScore = 0;
         const playerScores = [];
 
         if (lineup && lineup.playerIds) {
-            const capIdStr = lineup.captainId ? (lineup.captainId._id ? lineup.captainId._id.toString() : lineup.captainId.toString()) : "";
-            const vcIdStr = lineup.viceCaptainId ? (lineup.viceCaptainId._id ? lineup.viceCaptainId._id.toString() : lineup.viceCaptainId.toString()) : "";
+            const capIdStr = lineup.captainId ? (typeof lineup.captainId === 'string' ? lineup.captainId : (lineup.captainId.id || lineup.captainId._id?.toString() || lineup.captainId.toString())) : "";
+            const vcIdStr = lineup.viceCaptainId ? (typeof lineup.viceCaptainId === 'string' ? lineup.viceCaptainId : (lineup.viceCaptainId.id || lineup.viceCaptainId._id?.toString() || lineup.viceCaptainId.toString())) : "";
 
             for (const p of lineup.playerIds) {
-                const pId = p ? (p._id ? p._id.toString() : p.toString()) : "";
-                const basePoints = playerPointsMap.get(pId) || 0;
+                const pId = p ? (typeof p === 'string' ? p : (p.id || p._id?.toString() || p.toString())) : "";
+                
+                // Collect all possible identifier aliases for this player
+                const candidateKeys = [];
+                if (typeof p === 'string') {
+                    candidateKeys.push(p, p.toLowerCase(), p.trim());
+                } else if (p && typeof p === 'object') {
+                    if (p.id) candidateKeys.push(String(p.id), String(p.id).toLowerCase());
+                    if (p._id) candidateKeys.push(String(p._id));
+                    if (p.name) candidateKeys.push(String(p.name).toLowerCase().trim());
+                }
+
+                const poolPlayer = poolMap.get(pId) || (typeof p === 'string' ? (poolMap.get(p) || poolMap.get(p.toLowerCase().trim())) : null);
+                if (poolPlayer) {
+                    if (poolPlayer.id) candidateKeys.push(String(poolPlayer.id), String(poolPlayer.id).toLowerCase());
+                    if (poolPlayer._id) candidateKeys.push(String(poolPlayer._id));
+                    if (poolPlayer.name) candidateKeys.push(String(poolPlayer.name).toLowerCase().trim());
+                }
+
+                let basePoints = 0;
+                if (activePointsMap) {
+                    for (const key of candidateKeys) {
+                        if (!key) continue;
+                        let val = 0;
+                        if (typeof activePointsMap.get === 'function') {
+                            val = activePointsMap.get(key) || activePointsMap.get(key.toLowerCase());
+                        } else if (typeof activePointsMap === 'object') {
+                            val = activePointsMap[key] || activePointsMap[key.toLowerCase()];
+                        }
+                        if (val && typeof val === 'number' && val > 0) {
+                            basePoints = val;
+                            break;
+                        }
+                    }
+                }
+
                 let mult = 1.0;
                 let role = "Player";
 
-                if (pId === capIdStr) {
+                if (pId === capIdStr || candidateKeys.includes(capIdStr)) {
                     mult = 2.0;
                     role = "Captain (2x)";
-                } else if (pId === vcIdStr) {
+                } else if (pId === vcIdStr || candidateKeys.includes(vcIdStr)) {
                     mult = 1.5;
                     role = "Vice-Captain (1.5x)";
                 }
 
-                const effective = basePoints * mult;
+                const effective = Math.round(basePoints * mult * 10) / 10;
                 totalScore += effective;
+
+                const pName = poolPlayer?.name || (typeof p === 'object' ? p.name : null) || pId || "Player";
 
                 playerScores.push({
                     playerId: pId,
-                    name: p.name || "Player",
+                    name: pName,
                     role,
                     multiplier: mult,
                     basePoints,
@@ -158,7 +288,8 @@ export async function calculateLiveLeaderboard(leagueId, playerPointsMap) {
             }
         }
 
-        team.totalPoints = Math.round(totalScore * 10) / 10;
+        const calculatedPoints = Math.round(totalScore * 10) / 10;
+        team.totalPoints = calculatedPoints;
         await team.save();
 
         standings.push({
@@ -168,16 +299,20 @@ export async function calculateLiveLeaderboard(leagueId, playerPointsMap) {
             manager: team.userId?.username || "Manager",
             avatarUrl: team.userId?.avatarUrl,
             shadowPoints: team.userId?.shadowPoints || 0,
-            totalPoints: team.totalPoints,
+            totalPoints: calculatedPoints,
             players: playerScores
         });
     }
 
-    // Sort by points descending and assign rank
-    standings.sort((a, b) => b.totalPoints - a.totalPoints);
-    standings.forEach((s, idx) => {
-        s.rank = idx + 1;
-    });
+    // Sort by points descending and assign rank in memory and in DB
+    standings.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+    for (let idx = 0; idx < standings.length; idx++) {
+        standings[idx].rank = idx + 1;
+        await Team.findByIdAndUpdate(standings[idx].teamId, {
+            totalPoints: standings[idx].totalPoints,
+            rank: standings[idx].rank
+        });
+    }
 
     return standings;
 }
@@ -259,6 +394,8 @@ export async function startMatchSimulation(leagueId, io) {
 
                 const winnerTeam = finalLeaderboard[0] || null;
                 updatedLeague.matchState.winner = winnerTeam;
+                updatedLeague.matchState.playerFantasyPoints = sanitizePointsMapToObject(simState.playerPointsMap);
+                updatedLeague.markModified('matchState.playerFantasyPoints');
                 await updatedLeague.save();
 
                 io.to(`league:${leagueId}`).emit('match:completed', {
@@ -280,7 +417,7 @@ export async function startMatchSimulation(leagueId, io) {
         if (ball.inning === 1) {
             if (ball.runs === "W") {
                 simState.team1Wickets += 1;
-                simState.playerPointsMap.set(bowlerId, (simState.playerPointsMap.get(bowlerId) || 0) + 25);
+                awardPoints(simState.playerPointsMap, ball.bowler, 25);
                 const bStats = simState.bowlerStats.get(bowlerId) || { name: ball.bowler.name, wickets: 0, runs: 0, overs: "0.0" };
                 bStats.wickets += 1;
                 simState.bowlerStats.set(bowlerId, bStats);
@@ -291,7 +428,7 @@ export async function startMatchSimulation(leagueId, io) {
                 let bonus = 0;
                 if (r === 4) bonus = 1;
                 if (r === 6) bonus = 2;
-                simState.playerPointsMap.set(batsmanId, (simState.playerPointsMap.get(batsmanId) || 0) + r + bonus);
+                awardPoints(simState.playerPointsMap, ball.batsman, r + bonus);
 
                 const bStats = simState.bowlerStats.get(bowlerId) || { name: ball.bowler.name, wickets: 0, runs: 0, overs: "0.0" };
                 bStats.runs += r;
@@ -308,7 +445,7 @@ export async function startMatchSimulation(leagueId, io) {
             // Inning 2
             if (ball.runs === "W") {
                 simState.team2Wickets += 1;
-                simState.playerPointsMap.set(bowlerId, (simState.playerPointsMap.get(bowlerId) || 0) + 25);
+                awardPoints(simState.playerPointsMap, ball.bowler, 25);
                 const bStats = simState.bowlerStats.get(bowlerId) || { name: ball.bowler.name, wickets: 0, runs: 0, overs: "0.0" };
                 bStats.wickets += 1;
                 simState.bowlerStats.set(bowlerId, bStats);
@@ -319,7 +456,7 @@ export async function startMatchSimulation(leagueId, io) {
                 let bonus = 0;
                 if (r === 4) bonus = 1;
                 if (r === 6) bonus = 2;
-                simState.playerPointsMap.set(batsmanId, (simState.playerPointsMap.get(batsmanId) || 0) + r + bonus);
+                awardPoints(simState.playerPointsMap, ball.batsman, r + bonus);
 
                 const bStats = simState.bowlerStats.get(bowlerId) || { name: ball.bowler.name, wickets: 0, runs: 0, overs: "0.0" };
                 bStats.runs += r;
@@ -367,13 +504,14 @@ export async function startMatchSimulation(leagueId, io) {
         const activeBatters = Array.from(simState.batterStats.values()).slice(-2);
         const activeBowler = simState.bowlerStats.get(bowlerId) || { name: ball.bowler.name, overs: oversFormatted, wickets: ball.inning === 1 ? simState.team1Wickets : simState.team2Wickets, runs: ball.inning === 1 ? simState.team1Runs : simState.team2Runs, maidens: 0 };
 
-        // Save progress to League model
+        // Save progress to League model including real-time player fantasy points
         await League.findByIdAndUpdate(leagueId, {
             "matchState.currentBallIndex": simState.currentIndex,
             "matchState.currentScore": scoreObj,
             "matchState.currentBatters": activeBatters,
             "matchState.currentBowler": activeBowler,
-            "matchState.lastBall": ball
+            "matchState.lastBall": ball,
+            "matchState.playerFantasyPoints": sanitizePointsMapToObject(simState.playerPointsMap)
         });
 
         // Calculate live fantasy leaderboard
@@ -419,7 +557,7 @@ export async function fastForwardMatchSimulation(leagueId, io, speedOrInstant = 
         // Give realistic high points to all players in match
         (league.matchPlayerPool || []).forEach(p => {
             const pts = Math.floor(Math.random() * 50) + (p.price > 10 ? 40 : 15);
-            playerPointsMap.set(p.id, pts);
+            awardPoints(playerPointsMap, p, pts);
         });
 
         if (activeSimulations.has(leagueId.toString())) {
@@ -446,6 +584,8 @@ export async function fastForwardMatchSimulation(leagueId, io, speedOrInstant = 
 
         const winnerTeam = finalLeaderboard[0] || null;
         league.matchState.winner = winnerTeam;
+        league.matchState.playerFantasyPoints = sanitizePointsMapToObject(playerPointsMap);
+        league.markModified('matchState.playerFantasyPoints');
         await league.save();
 
         io.to(`league:${leagueId}`).emit('match:completed', {
@@ -483,7 +623,40 @@ export async function getLiveMatchStateService(leagueId) {
     if (!league) return null;
 
     const teams = await Team.find({ leagueId }).populate('userId', 'username avatarUrl shadowPoints');
-    const standings = await calculateLiveLeaderboard(leagueId, new Map());
+    
+    // Check if simulation is active or if points were saved
+    const simState = activeSimulations.get(leagueId.toString());
+    let playerPointsMap = new Map();
+
+    if (simState && simState.playerPointsMap) {
+        playerPointsMap = simState.playerPointsMap;
+    } else if (league.matchState && league.matchState.playerFantasyPoints) {
+        const savedPoints = league.matchState.playerFantasyPoints;
+        if (savedPoints instanceof Map) {
+            playerPointsMap = savedPoints;
+        } else if (typeof savedPoints === 'object') {
+            playerPointsMap = new Map(Object.entries(savedPoints));
+        }
+    }
+
+    let standings = [];
+    if (playerPointsMap.size > 0) {
+        standings = await calculateLiveLeaderboard(leagueId, playerPointsMap);
+    } else {
+        standings = teams.map((team, idx) => ({
+            teamId: team._id,
+            userId: team.userId?._id,
+            teamName: team.name,
+            manager: team.userId?.username || "Manager",
+            avatarUrl: team.userId?.avatarUrl,
+            shadowPoints: team.userId?.shadowPoints || 0,
+            totalPoints: team.totalPoints || 0,
+            rank: team.rank || idx + 1,
+            players: []
+        }));
+        standings.sort((a, b) => b.totalPoints - a.totalPoints);
+        standings.forEach((s, idx) => { s.rank = idx + 1; });
+    }
 
     return {
         leagueId: league._id,

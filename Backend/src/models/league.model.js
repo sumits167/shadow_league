@@ -122,7 +122,7 @@ const leagueSchema = new Schema({
         currentBowler: { name: String, overs: String, maidens: Number, runs: Number, wickets: Number },
         lastBall: Schema.Types.Mixed,
         recentBalls: [Schema.Types.Mixed],
-        playerFantasyPoints: { type: Map, of: Number, default: {} }
+        playerFantasyPoints: { type: Schema.Types.Mixed, default: {} }
     }
 }, { timestamps: true });
 

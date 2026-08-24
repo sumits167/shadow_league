@@ -5,7 +5,7 @@ import { Player } from '../models/player.model.js';
 import { MatchDataProvider } from './matchProvider/matchData.provider.js';
 import ApiError from '../utils/ApiError.js';
 
-export const startDraftService = async (leagueId, requestingUserId) => {
+export const startDraftService = async (leagueId, requestingUserId, isAutoScheduled = false) => {
     const league = await League.findById(leagueId);
     if (!league) {
         throw new ApiError(404, "League not found", "LEAGUE_NOT_FOUND");
@@ -13,6 +13,12 @@ export const startDraftService = async (leagueId, requestingUserId) => {
 
     if (league.status === "Completed") {
         throw new ApiError(400, "Cannot start draft for completed league", "LEAGUE_COMPLETED");
+    }
+
+    // Check if draft is already locked to a future scheduled time
+    const existingSchedule = league.draftState?.scheduledStartTime || league.settings?.draftDate;
+    if (!isAutoScheduled && existingSchedule && new Date(existingSchedule) > new Date()) {
+        throw new ApiError(400, `Draft is scheduled for ${new Date(existingSchedule).toLocaleString()} and is locked. It will start automatically at that time and cannot be started manually.`, "DRAFT_SCHEDULED_LOCKED");
     }
 
     const minTeams = league.settings?.minTeams || 2;
@@ -81,6 +87,16 @@ export const scheduleDraftService = async (leagueId, requestingUserId, scheduled
     const league = await League.findById(leagueId);
     if (!league) {
         throw new ApiError(404, "League not found", "LEAGUE_NOT_FOUND");
+    }
+
+    if (league.status !== "Created" && league.status !== "Upcoming") {
+        throw new ApiError(400, `Cannot schedule draft for league in ${league.status} status`, "INVALID_LEAGUE_STATUS");
+    }
+
+    // Check if draft is already locked to a scheduled time
+    const existingSchedule = league.draftState?.scheduledStartTime || league.settings?.draftDate;
+    if (existingSchedule && new Date(existingSchedule) > new Date()) {
+        throw new ApiError(400, `Draft is already scheduled and locked for ${new Date(existingSchedule).toLocaleString()}. Once scheduled, the draft time cannot be modified.`, "DRAFT_SCHEDULE_LOCKED");
     }
 
     const minTeams = league.settings?.minTeams || 2;

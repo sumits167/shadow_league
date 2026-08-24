@@ -62,13 +62,19 @@ export function useMatchSocket(leagueId: string) {
       socket.emit("match:join", { leagueId });
     };
 
-    const handleState = (state: { matchState?: { status: "Scheduled" | "Live" | "Completed"; currentScore?: LiveScore; simulationSpeed?: number }; standings?: LiveLeaderboardEntry[] }) => {
-      if (state?.matchState) {
-        setMatchStatus(state.matchState.status || "Scheduled");
-        if (state.matchState.currentScore) setScore(state.matchState.currentScore);
-        if (state.matchState.simulationSpeed) setSimulationSpeed(state.matchState.simulationSpeed);
-      }
-      if (state?.standings) {
+    const handleState = (state: {
+      status?: "Created" | "Upcoming" | "Draft" | "Active" | "Completed";
+      matchState?: { status: "Scheduled" | "Live" | "Completed"; currentScore?: LiveScore; simulationSpeed?: number };
+      standings?: LiveLeaderboardEntry[];
+    }) => {
+      const derivedStatus =
+        state?.matchState?.status ||
+        (state?.status === "Completed" ? "Completed" : state?.status === "Active" ? "Live" : "Scheduled");
+
+      setMatchStatus(derivedStatus as "Scheduled" | "Live" | "Completed");
+      if (state?.matchState?.currentScore) setScore(state.matchState.currentScore);
+      if (state?.matchState?.simulationSpeed) setSimulationSpeed(state.matchState.simulationSpeed);
+      if (state?.standings && state.standings.length > 0) {
         setLeaderboard(state.standings);
       }
     };
@@ -87,14 +93,14 @@ export function useMatchSocket(leagueId: string) {
       if (data.matchScore) setScore(data.matchScore);
       if (data.currentBatters) setCurrentBatters(data.currentBatters);
       if (data.currentBowler) setCurrentBowler(data.currentBowler);
-      if (data.leaderboard) setLeaderboard(data.leaderboard);
+      if (data.leaderboard && data.leaderboard.length > 0) setLeaderboard(data.leaderboard);
       if (data.playerPoints) setPlayerPoints(data.playerPoints);
     };
 
     const handleCompleted = (data: { finalScore: LiveScore; leaderboard: LiveLeaderboardEntry[] }) => {
       setMatchStatus("Completed");
       if (data.finalScore) setScore(data.finalScore);
-      if (data.leaderboard) setLeaderboard(data.leaderboard);
+      if (data.leaderboard && data.leaderboard.length > 0) setLeaderboard(data.leaderboard);
       toast.success("Match Finished! Final Fantasy Leaderboard calculated.");
     };
 

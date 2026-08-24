@@ -96,7 +96,7 @@ export function startScheduledDraftWatcher(io) {
                 if (teams.length >= 2) {
                     console.log(`[Scheduled Draft Watcher] Auto-starting draft for league: ${league.name} (${league._id})`);
                     try {
-                        await startDraftService(league._id, league.createdById);
+                        await startDraftService(league._id, league.createdById, true);
                         const freshState = await getDraftStateService(league._id);
 
                         io.to(`draft:${league._id}`).emit('draft:turn-started', {

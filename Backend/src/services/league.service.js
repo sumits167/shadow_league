@@ -173,8 +173,9 @@ export const joinLeagueService = async (leagueId, userId, teamData) => {
         throw new ApiError(403, "You must join the club before joining this league", "NOT_CLUB_MEMBER");
     }
 
-    if (league.status === "Completed") {
-        throw new ApiError(400, "Cannot join a completed league season", "LEAGUE_COMPLETED");
+    // Only allow joining when league is in Created or Upcoming state
+    if (league.status !== "Created" && league.status !== "Upcoming") {
+        throw new ApiError(400, `Registration is closed for this league (current state: ${league.status}). Teams can only join before the draft begins.`, "LEAGUE_REGISTRATION_CLOSED");
     }
 
     // Check one user = one team per league

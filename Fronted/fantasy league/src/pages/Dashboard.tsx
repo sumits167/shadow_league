@@ -196,14 +196,16 @@ export default function Dashboard() {
                 ? `Draft: ${new Date(league.draftState.scheduledStartTime).toLocaleDateString()}`
                 : "Pre-Draft Lobby";
 
+        const userTeam = (league as { userTeam?: { rank?: number; totalPoints?: number } }).userTeam;
         return {
           id: league._id,
           name: league.name,
-          rank: index + 1,
+          rank: userTeam?.rank || index + 1,
           totalMembers: league.settings?.maxTeams || 10,
-          totalPoints: 0,
+          totalPoints: userTeam?.totalPoints || 0,
           deadline,
           status: displayStatus,
+          hasJoined: !!(league as { hasJoined?: boolean }).hasJoined,
         };
       })
     : [];

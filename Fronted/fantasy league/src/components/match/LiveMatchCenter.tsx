@@ -134,7 +134,7 @@ export function LiveMatchCenter({ leagueId, myUsername, isClubAdmin }: LiveMatch
                 </div>
               </div>
               <div className="text-sm font-mono font-extrabold text-amber-400 pt-1">
-                {winningTeam.totalPoints.toFixed(1)} pts
+                {(winningTeam.totalPoints ?? 0).toFixed(1)} pts
               </div>
             </div>
 
@@ -158,7 +158,7 @@ export function LiveMatchCenter({ leagueId, myUsername, isClubAdmin }: LiveMatch
                   </div>
                 </div>
                 <div className="text-sm font-mono font-extrabold text-slate-300 pt-1">
-                  {runnerUp.totalPoints.toFixed(1)} pts
+                  {(runnerUp.totalPoints ?? 0).toFixed(1)} pts
                 </div>
               </div>
             )}
@@ -183,7 +183,7 @@ export function LiveMatchCenter({ leagueId, myUsername, isClubAdmin }: LiveMatch
                   </div>
                 </div>
                 <div className="text-sm font-mono font-extrabold text-amber-600 pt-1">
-                  {thirdPlace.totalPoints.toFixed(1)} pts
+                  {(thirdPlace.totalPoints ?? 0).toFixed(1)} pts
                 </div>
               </div>
             )}
@@ -577,7 +577,7 @@ export function LiveMatchCenter({ leagueId, myUsername, isClubAdmin }: LiveMatch
 
                   <div className="text-right">
                     <span className="text-base sm:text-lg font-mono font-extrabold text-foreground">
-                      {item.totalPoints.toFixed(1)}{" "}
+                      {(item.totalPoints ?? 0).toFixed(1)}{" "}
                       <span className="text-xs font-sans text-muted-foreground font-normal">pts</span>
                     </span>
                     <span className="text-[10px] text-green-400 block font-semibold">

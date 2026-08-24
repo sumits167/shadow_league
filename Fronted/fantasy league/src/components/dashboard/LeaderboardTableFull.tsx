@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { TrophyIcon, TrendingUpIcon, TrendingDownIcon, MinusIcon, EyeIcon } from "lucide-react"
 
 export interface FullLeaderboardItem {
+  teamId?: string
   rank: number
   teamName: string
   manager: string

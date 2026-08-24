@@ -32,8 +32,18 @@ import {
 import { useMe } from "@/features/auth/hooks/useAuth";
 import { useMyClubs } from "@/features/club/hooks/useClub";
 import { useClubLeagues, useLeagueLeaderboard, useUserJoinedStandings } from "@/features/league/hooks/useLeague";
+import { useTeamRoster } from "@/features/team/hooks/useTeam";
 import { useClubStore } from "@/store/clubStore";
 import { api } from "@/services/api";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+  SheetClose
+} from "@/components/ui/sheet";
 
 export default function LeaderBoardPage() {
   const { data: user } = useMe();
@@ -87,14 +97,19 @@ export default function LeaderBoardPage() {
     }
   };
 
+  const [selectedTeamForDrawer, setSelectedTeamForDrawer] = useState<FullLeaderboardItem | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
   const handleViewTeam = (team: FullLeaderboardItem) => {
-    toast.info(`Viewing roster for ${team.teamName} (${team.manager})`);
+    setSelectedTeamForDrawer(team);
+    setIsDrawerOpen(true);
   };
 
   // Convert backend standings to table format
   const rawStandings = leaderboardData?.standings || [];
   const standingsItems: FullLeaderboardItem[] = rawStandings.length
-    ? rawStandings.map((s: { rank: number; teamName: string; owner: string; avatarUrl?: string; totalPoints: number }, index: number) => ({
+    ? rawStandings.map((s: { rank: number; teamId?: string; teamName: string; owner: string; avatarUrl?: string; totalPoints: number }, index: number) => ({
+        teamId: s.teamId,
         rank: s.rank || index + 1,
         teamName: s.teamName,
         manager: s.owner ? (s.owner === username ? `${s.owner} (You)` : s.owner) : "Manager",
@@ -417,7 +432,7 @@ export default function LeaderBoardPage() {
                         </div>
                         <div className="text-right">
                           <span className="text-sm font-extrabold font-mono text-foreground">
-                            {item.myTeam.totalPoints.toFixed(1)} <span className="text-[10px] font-sans font-normal text-muted-foreground">pts</span>
+                            {(item.myTeam.totalPoints ?? 0).toFixed(1)} <span className="text-[10px] font-sans font-normal text-muted-foreground">pts</span>
                           </span>
                           <span className="text-[10px] text-primary block font-semibold">
                             Rank #{item.myTeam.rank} of {item.totalTeams}
@@ -445,7 +460,7 @@ export default function LeaderBoardPage() {
                               <span className="text-[10px] text-muted-foreground">(@{st.owner})</span>
                             </div>
                             <span className="font-mono font-bold text-foreground">
-                              {st.totalPoints.toFixed(1)} pts
+                              {(st.totalPoints ?? 0).toFixed(1)} pts
                             </span>
                           </div>
                         ))}
@@ -565,6 +580,130 @@ export default function LeaderBoardPage() {
           leaderName={firstPlaceStanding?.teamName ? `${firstPlaceStanding.teamName} (#1)` : "Leader (#1)"}
         />
       </div>
+
+      {/* 7. Team Squad Roster Drawer Modal */}
+      <TeamRosterDrawer
+        team={selectedTeamForDrawer}
+        open={isDrawerOpen}
+        onOpenChange={setIsDrawerOpen}
+      />
     </div>
+  );
+}
+
+function TeamRosterDrawer({
+  team,
+  open,
+  onOpenChange,
+}: {
+  team: FullLeaderboardItem | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: rosterData, isLoading } = useTeamRoster(team?.teamId || "");
+  const players = (rosterData?.players || rosterData?.playerIds || []) as Array<{
+    id?: string;
+    _id?: string;
+    name?: string;
+    position?: string;
+    realTeam?: string;
+    price?: number;
+  }>;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="bg-card border-l border-border p-6 flex flex-col justify-between w-full sm:max-w-md overflow-y-auto">
+        <div className="space-y-5">
+          <SheetHeader className="p-0 space-y-1.5 border-b border-border pb-4">
+            <div className="flex items-center justify-between">
+              <Badge className="bg-primary text-primary-foreground font-extrabold text-xs">
+                Rank #{team?.rank}
+              </Badge>
+              <span className="text-xs font-mono font-extrabold text-primary">
+                {(team?.points ?? 0).toFixed(1)} pts
+              </span>
+            </div>
+            <SheetTitle className="text-xl font-bold text-foreground flex items-center gap-2">
+              <Avatar className="size-8 border border-border">
+                <AvatarImage src={team?.avatar} />
+                <AvatarFallback className="text-xs font-bold">{team?.teamName?.substring(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <span>{team?.teamName}</span>
+            </SheetTitle>
+            <SheetDescription className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <span>Manager:</span>
+              <strong className="text-foreground">@{team?.manager}</strong>
+            </SheetDescription>
+          </SheetHeader>
+
+          {/* Squad Roster List */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                Drafted Squad Roster ({players.length} Players)
+              </h4>
+              <span className="text-[11px] text-muted-foreground">Official Roster</span>
+            </div>
+
+            {isLoading ? (
+              <div className="p-12 text-center text-muted-foreground flex flex-col items-center justify-center gap-2">
+                <Loader2 className="size-6 animate-spin text-primary" />
+                <p className="text-xs">Loading team squad roster...</p>
+              </div>
+            ) : players.length > 0 ? (
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1 scrollbar-thin">
+                {players.map((p, idx) => {
+                  const pos = p.position || "PLAYER";
+                  const badgeColor =
+                    pos === "BAT"
+                      ? "border-blue-500/30 text-blue-400 bg-blue-500/10"
+                      : pos === "BOWL"
+                      ? "border-amber-500/30 text-amber-400 bg-amber-500/10"
+                      : pos === "AR"
+                      ? "border-purple-500/30 text-purple-400 bg-purple-500/10"
+                      : "border-green-500/30 text-green-400 bg-green-500/10";
+
+                  return (
+                    <div
+                      key={p.id || p._id || idx}
+                      className="p-3 rounded-xl border border-border bg-secondary/20 hover:bg-secondary/40 transition-colors flex items-center justify-between text-xs"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="size-6 rounded-lg bg-secondary text-muted-foreground font-mono font-bold text-[11px] flex items-center justify-center">
+                          {idx + 1}
+                        </div>
+                        <div>
+                          <div className="font-bold text-foreground">{p.name || "Player"}</div>
+                          <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                            <span>{p.realTeam || "INTL"}</span>
+                            <span>•</span>
+                            <span className="font-mono">₹{p.price ? `${p.price} Cr` : "Standard"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <Badge variant="outline" className={`text-[10px] font-bold uppercase px-2 py-0.5 ${badgeColor}`}>
+                        {pos}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-8 text-center border border-dashed border-border rounded-xl text-muted-foreground space-y-1">
+                <UsersIcon className="size-8 mx-auto text-muted-foreground/50 mb-2" />
+                <p className="text-xs font-semibold text-foreground">No Players Drafted Yet</p>
+                <p className="text-[11px]">This team has not selected players into their squad roster yet.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <SheetFooter className="p-0 pt-4 border-t border-border flex flex-row items-center justify-between mt-4">
+          <SheetClose render={<Button variant="outline" size="sm" className="text-xs">Close</Button>} />
+          <span className="text-[11px] text-muted-foreground font-medium">15-Player Squad</span>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
